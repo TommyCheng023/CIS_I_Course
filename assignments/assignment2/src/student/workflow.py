@@ -6,6 +6,7 @@ how to register the robot base to the tracker.
 from dataclasses import dataclass, field
 from typing import List
 
+from assignments.assignment2.src.student.registration import average_frames
 import numpy as np
 
 from data_types.nominal_types import vct3, Frame
@@ -13,6 +14,7 @@ from data_types.nominal_types import vct3, Frame
 from ..robot import Robot
 from assignments.assignment1.src.tracker import Tracker
 from ..simulation import PlacedBody
+from .. import simulation
 
 
 @dataclass
@@ -46,7 +48,10 @@ def measure_home_offsets(rob: Robot, n_homings: int = 5) -> np.ndarray:
         n_homings - how many homings to average
     output: estimated delta_theta_sys at home, np.ndarray of 6
     """
-    raise NotImplementedError("TODO: implement measure_home_offsets")
+    records = [
+        rob.home_robot() for _ in range(n_homings)
+    ]
+    return -np.mean(records, axis=0)
 
 
 # this should contain a desired accuracy which will affect the number of calibration poses
@@ -101,7 +106,18 @@ def collect_calibration_data(rob: Robot, trk: Tracker, mbee_placed: PlacedBody,
         repeats - readings per pose
     output: CalibrationData
     """
-    raise NotImplementedError("TODO: implement collect_calibration_data")
+    data = CalibrationData()
+    t_collect = simulation.clock.elapsed
+    for theta in thetas:
+        rob.move_joints(theta)
+        for _ in range(repeats):
+            observations = simulation.sample_marker_bodies(trk)
+            observed = observations[mbee_placed.body.name]
+            if observed is not None:
+                data.thetas.append(theta)
+                data.frames.append(observed.frame)
+    data.t_collect = simulation.clock.elapsed - t_collect
+    return data
 
 
 def estimate_base_frame(data: CalibrationData, kins: Robot) -> Frame:
@@ -119,4 +135,8 @@ def estimate_base_frame(data: CalibrationData, kins: Robot) -> Frame:
             ImprovedKinematics)
     output: F_X
     """
-    raise NotImplementedError("TODO: implement estimate_base_frame")
+    estimates = [
+        F_obs * kins.fwd_kins(theta).inv()
+        for theta, F_obs in zip(data.thetas, data.frames)
+    ]
+    return average_frames(estimates)

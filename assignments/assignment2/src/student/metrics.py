@@ -23,8 +23,11 @@ def frame_error(F_a: Frame, F_b: Frame) -> Tuple[float, float]:
         (angle_rad, dist_mm) - ||alpha|| (the rotation angle of dF.R) and
             ||epsilon|| (the norm of dF.p)
     """
-    raise NotImplementedError("TODO: implement frame_error")
-
+    dF = F_a.inv() * F_b
+    cos_alpha  = (np.trace(dF.R.matrix) - 1) / 2
+    alpha = float(np.arccos(np.clip(cos_alpha, -1.0, 1.0)))
+    epsilon = dF.p.norm()
+    return alpha, epsilon
 
 def summarize_errors(errors: Sequence[Tuple[float, float]]) -> Dict[str, float]:
     """
@@ -36,4 +39,13 @@ def summarize_errors(errors: Sequence[Tuple[float, float]]) -> Dict[str, float]:
         dict with at least the keys
             n, rms_angle, max_angle, rms_pos, max_pos
     """
-    raise NotImplementedError("TODO: implement summarize_errors")
+    values = np.asarray(errors, dtype=float)
+    angles = values[:, 0]
+    positions = values[:, 1]
+    return {
+        "n": len(values),
+        "rms_angle": float(np.sqrt(np.mean(angles**2))),
+        "max_angle": float(np.max(angles)),
+        "rms_pos": float(np.sqrt(np.mean(positions**2))),
+        "max_pos": float(np.max(positions))
+    }

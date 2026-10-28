@@ -41,7 +41,16 @@ def average_frames(frames: List[Frame]) -> Frame:
         frames - List[Frame], all estimates of the same transform
     output: the averaged Frame
     """
-    raise NotImplementedError("TODO: implement average_frames")
+    p_mean = np.mean([F.p.vec.ravel() for F in frames], axis=0)
+    R_mean = np.mean([F.R.matrix for F in frames], axis=0)
+
+    U, _, Vt = np.linalg.svd(R_mean)
+
+    correction = np.eye(3)
+    correction[2, 2] = np.linalg.det(U @ Vt)
+    R_avg = U @ correction @ Vt
+
+    return Frame(Rot(matrix=R_avg), vct3(p_mean))
 
 
 def refine_marker_body(trk: Tracker, placed: PlacedBody, n_readings: int = 30) -> List[vct3]:
