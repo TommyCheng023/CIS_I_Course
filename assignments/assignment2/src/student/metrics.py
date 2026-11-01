@@ -7,6 +7,7 @@ from typing import Dict, Sequence, Tuple
 import numpy as np
 
 from data_types.nominal_types import Frame
+from uncertainty_networks.se3 import log_so3
 
 
 def frame_error(F_a: Frame, F_b: Frame) -> Tuple[float, float]:
@@ -24,8 +25,7 @@ def frame_error(F_a: Frame, F_b: Frame) -> Tuple[float, float]:
             ||epsilon|| (the norm of dF.p)
     """
     dF = F_a.inv() * F_b
-    cos_alpha  = (np.trace(dF.R.matrix) - 1) / 2
-    alpha = float(np.arccos(np.clip(cos_alpha, -1.0, 1.0)))
+    alpha = float(np.linalg.norm(log_so3(dF.R.matrix)))
     epsilon = dF.p.norm()
     return alpha, epsilon
 

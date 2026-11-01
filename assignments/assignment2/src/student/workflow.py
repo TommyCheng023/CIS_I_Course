@@ -85,7 +85,44 @@ def plan_calibration_poses(rob: Robot, trk: Tracker, mbee_local_positions: List[
         kwargs - whatever your design needs (grid sizes, margins, ...)
     output: ordered List of joint vectors (np.ndarray of 6)
     """
-    raise NotImplementedError("TODO: implement plan_calibration_poses")
+    ratio = 1e-3 / desired_accuracy
+    n_points = max(3, int(np.ceil(6 * max(1.0, ratio))) + 1)
+    n_repeats = max(1, int(np.ceil(8 * ratio ** 2)))
+
+    poses = []
+    zero = np.zeros(6)
+
+    def add_pose(theta):
+        if not rob.within_limits(theta):
+            raise ValueError(f"Joint limits exceeded: {theta}")
+        F_world_ee = rob.F_rob * rob.fwd_kins(theta)
+        markers_world = [
+            F_world_ee * a for a in mbee_local_positions
+        ]
+        if not trk.is_visible(markers_world):
+            raise ValueError(f"Markers are not visible at {theta}")
+
+        for _ in range(n_repeats):
+            poses.append(theta.copy())
+
+    add_pose(zero)
+
+    for k in range(6):
+        values = np.linspace(
+            rob.theta_min[k],
+            rob.theta_max[k],
+            n_points,
+        )
+
+        for value in values:
+            theta = zero.copy()
+            theta[k] = value
+            add_pose(theta)
+
+        add_pose(zero)
+
+    return poses
+    
 
 
 def collect_calibration_data(rob: Robot, trk: Tracker, mbee_placed: PlacedBody,

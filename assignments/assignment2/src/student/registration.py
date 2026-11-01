@@ -10,6 +10,7 @@ import numpy as np
 from data_types.nominal_types import vct3, Rot, Frame
 
 from assignments.assignment1.src.tracker import Tracker
+from .. import simulation
 from ..simulation import PlacedBody
 
 
@@ -26,7 +27,31 @@ def register_points(a: List[vct3], b: List[vct3]) -> Frame:
         b - the same points observed in the target frame, same order
     output: Frame mapping a -> b
     """
-    raise NotImplementedError("TODO: implement register_points")
+    A = np.array([point.vec.ravel() for point in a], dtype=float)
+    B = np.array([point.vec.ravel() for point in b], dtype=float)
+
+    if not np.all(np.isfinite(A)) or not np.all(np.isfinite(B)):
+        raise ValueError("Point coordinates must be finite")
+
+    center_a = np.mean(A, axis=0)
+    center_b = np.mean(B, axis=0)
+    A_centered = A - center_a
+    B_centered = B - center_b
+
+    if (
+        np.linalg.matrix_rank(A_centered) < 2
+        or np.linalg.matrix_rank(B_centered) < 2
+    ):
+        raise ValueError("Points must not be collinear")
+
+    H = A_centered.T @ B_centered
+    U, _, Vt = np.linalg.svd(H)
+    correction = np.eye(3)
+    correction[2, 2] = np.linalg.det(Vt.T @ U.T)
+    R = Vt.T @ correction @ U.T
+    translation = center_b - R @ center_a
+
+    return Frame(Rot(matrix=R), vct3(translation))
 
 
 def average_frames(frames: List[Frame]) -> Frame:
@@ -74,4 +99,25 @@ def refine_marker_body(trk: Tracker, placed: PlacedBody, n_readings: int = 30) -
         n_readings - number of readings to average
     output: the new List[vct3] of marker positions (also stored on the body)
     """
-    raise NotImplementedError("TODO: implement refine_marker_body")
+    body = placed.body
+    nominal = list(body.nominal_marker_positions)
+    local_readings = []
+
+    for _ in range(n_readings):
+        simulation.sample_marker_bodies(trk)
+        observed = simulation.most_recent_observed_markers(body)
+        if observed is None:
+            raise ValueError(f"Marker body {body.name} is not visible")
+        F_body_to_tracker = register_points(nominal, observed)
+        F_tracker_to_body = F_body_to_tracker.inv()
+
+        points_local = [
+            (F_tracker_to_body * point).vec.ravel()
+            for point in observed
+        ]
+        local_readings.append(points_local)
+
+    mean_positions = np.mean(local_readings, axis=0)
+    refined = [vct3(point) for point in mean_positions]
+    simulation.update_marker_body(body, refined)
+    return refined

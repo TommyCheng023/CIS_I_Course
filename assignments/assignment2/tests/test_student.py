@@ -87,8 +87,51 @@ def test_refine_marker_body_reduces_layout_error():
     allowed in a test) up to a rigid transform, refine, and show the
     distance shrank. Also check how much simulated time it cost.
     """
-    
-    pytest.skip("TODO")
+    body = simulation.define_marker_body("mb", [
+        vct3(50, 40, 30),
+        vct3(50, -40, -30),
+        vct3(-50, 40, -30),
+        vct3(-50, -40, 30),
+    ])
+    placed = simulation.place_marker_body(
+        body, Frame(Rot(), vct3(0, 0, 1500))
+    )
+    trk = simulation.create_tracker(
+        "trk", Frame.eye(), [placed], seed=0
+    )
+
+    from data_types.uncertain_types import uvct3
+    offsets = [
+        vct3(2, 0, 0), vct3(-2, 0, 0),
+        vct3(0, 2, 0), vct3(0, -2, 0),
+    ]
+    actual = [
+        point + offset
+        for point, offset in zip(body.nominal_marker_positions, offsets)
+    ]
+    body.actual_marker_positions = [uvct3(point) for point in actual]
+
+    def layout_error(points):
+        F = registration.register_points(points, actual)
+        return np.sqrt(np.mean([
+            (F * point - target).norm() ** 2
+            for point, target in zip(points, actual)
+        ]))
+
+    before = layout_error(body.nominal_marker_positions)
+    t_start = simulation.clock.elapsed
+
+    refined = registration.refine_marker_body(trk, placed, n_readings=30)
+
+    assert layout_error(refined) < before
+    assert np.isclose(
+        simulation.clock.elapsed - t_start,
+        30 * simulation.constants.SAMPLE_DELTA_T_SEC,
+    )
+    assert np.allclose(
+        [point.vec.ravel() for point in body.nominal_marker_positions],
+        [point.vec.ravel() for point in refined],
+    )
 
 
 # ---------------------------------------------------------------- workflow
@@ -110,7 +153,30 @@ def test_estimate_base_frame_on_synthetic_data():
 
 def test_planned_poses_are_visible_and_within_limits():
     """TODO: write this test for your plan_calibration_poses."""
-    pytest.skip("TODO")
+    rob = simulation.create_robot("rob", Frame.eye(), seed=1)
+    trk = simulation.create_tracker(
+        "trk", Frame(Rot(), vct3(900, 0, -1300)), seed=1
+    )
+    markers = [
+        vct3(20, 45, -35),
+        vct3(10, -30, 30),
+        vct3(-30, 10, -25),
+        vct3(-45, 15, 25),
+    ]
+    t_start = simulation.clock.elapsed
+    poses = workflow.plan_calibration_poses(
+        rob, trk, markers, desired_accuracy=1e-3
+    )
+    assert len(poses) > 0
+    assert simulation.clock.elapsed == t_start
+    for theta in poses:
+        assert rob.within_limits(theta)
+        F = rob.F_rob * rob.fwd_kins(theta)
+        assert trk.is_visible([F * point for point in markers])
+    tighter_plan = workflow.plan_calibration_poses(
+        rob, trk, markers, desired_accuracy=5e-4
+    )
+    assert len(tighter_plan) > len(poses)
 
 
 def test_measure_home_offsets_matches_encoders():
@@ -159,4 +225,89 @@ def test_fit_recovers_synthetic_parameters():
     the parameters themselves need not match if your model has a null
     direction -- compare poses, not parameters.
     """
-    pytest.skip("TODO")
+    rob = simulation.create_robot("rob", Frame.eye(), seed=0)
+    rng = np.random.default_rng(42)
+    source = kinematics.ImprovedKinematics(rob, Frame.eye())
+    source.params = rng.normal(0.0, 1e-3, source.params.shape)
+    source.params[6] = 0.0
+    data = workflow.CalibrationData()
+    for _ in range(30):
+        theta = random_theta(rng)
+        data.thetas.append(theta)
+        data.frames.append(source.predict_in_tracker(theta))
+    fitted = kinematics.ImprovedKinematics(rob, Frame.eye())
+    result = fitted.fit(
+        data, ftol=1e-11, xtol=1e-11, gtol=1e-11
+    )
+    assert result["success"]
+    for _ in range(10):
+        theta = random_theta(rng)
+        expected = source.predict_in_tracker(theta)
+        predicted = fitted.predict_in_tracker(theta)
+
+        angle, position = metrics.frame_error(expected, predicted)
+        assert angle < 1e-6
+        assert position < 1e-4
+
+
+# ---------------------------------------------------------------- functions
+
+def test_collect_calibration_data_records_samples_and_time():
+    """
+    Check that each commanded pose produces the requested number of
+    observations, stored joint values match the command order, and observed
+    frames agree with the corresponding end-effector poses within a
+    noise-tolerant threshold. Verify that the reported collection time and
+    clock increment include both robot motion and tracker sampling.
+    """
+    rob = simulation.create_robot("rob", Frame.eye(), seed=1)
+    markers = [
+        vct3(20, 45, -35),
+        vct3(10, -30, 30),
+        vct3(-30, 10, -25),
+        vct3(-45, 15, 25),
+    ]
+    placed = simulation.create_robot_calibration_body(rob, markers)
+    trk = simulation.create_tracker(
+        "trk", Frame(Rot(), vct3(900, 0, -1300)),
+        [placed], seed=1,
+    )
+
+    poses = [
+        np.array([100, 0, 100, 0, 0, 0], dtype=float),
+        np.array([200, 50, 200, 0.2, 0, 0], dtype=float),
+    ]
+    repeats = 2
+    expected_time = 0.0
+    previous = rob.state().theta.copy()
+
+    for theta in poses:
+        expected_time += rob.motion_time(previous, theta)
+        expected_time += (
+            repeats * simulation.constants.SAMPLE_DELTA_T_SEC
+        )
+        previous = theta
+
+    t_start = simulation.clock.elapsed
+    data = workflow.collect_calibration_data(
+        rob, trk, placed, poses, repeats=repeats
+    )
+
+    assert len(data) == len(poses) * repeats
+    assert len(data.frames) == len(data.thetas)
+    assert np.isclose(data.t_collect, expected_time)
+    assert np.isclose(
+        simulation.clock.elapsed - t_start, expected_time
+    )
+    for i, theta in enumerate(poses):
+        expected_pose = trk.nominal_pose().inv() * rob.actual_ee_pose(theta)
+
+        for j in range(repeats):
+            index = i * repeats + j
+            assert np.allclose(data.thetas[index], theta)
+
+            angle, position = metrics.frame_error(
+                expected_pose, data.frames[index]
+            )
+            assert angle < 0.02
+            assert position < 1.0
