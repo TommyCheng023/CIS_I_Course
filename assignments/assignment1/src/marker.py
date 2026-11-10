@@ -43,7 +43,7 @@ class MarkerBody:
 
     def get_marker_positions_world_frame(self) -> List[uvct3]:
         if self.world_frame is None:
-            raise RuntimeError("marker world frame has not been set")
+            raise RuntimeError("marker world  has not been set")
         return [self.world_frame * p for p in self.nominal_marker_positions], [self.world_frame * p for p in self.get_actual_marker_positions()]
 
     def update_world_frame(self, frame: Union[Frame, uFrame]):

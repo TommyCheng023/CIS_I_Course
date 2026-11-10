@@ -76,3 +76,5 @@ assignments/assignment2/notebooks/assignment2_solution.ipynb
 assignments/assignment3/solution/
 assignments/assignment3/notebooks/assignment3_solution.ipynb
 assignments/assignment3/server/
+__pycache__/
+*.pyc
