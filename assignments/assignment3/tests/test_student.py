@@ -262,4 +262,101 @@ def test_predicted_tre_translation_only(mesh):
         assert np.isclose(prediction[key], expected)
 
 
-# TODO: two more test functions for `coarse_registration` and `collect_samples`
+def test_coarse_registration_recovers_known_transform():
+    """Recover a known transform from symmetric per-patch samples."""
+    from src.student import workflow
+
+    boxes = load_patch_boxes(
+        MESH_FILE.parent / "box-centroids-rotations-world.json"
+    )
+    plan = workflow.plan_patches(
+        boxes, n_patches=12, samples_per_patch=1
+    )
+    box_by_id = {box.id: box for box in boxes}
+
+    rng = np.random.default_rng(22)
+    F_true = random_frame(rng)
+
+    offsets = np.vstack((
+        np.zeros((1, 3)),
+        np.eye(3),
+        -np.eye(3),
+    ))
+
+    by_patch = {}
+    for patch_id in plan:
+        center_ref = (
+            F_true.inv() * vct3(box_by_id[patch_id].p)
+        ).vec.ravel()
+        by_patch[patch_id] = center_ref + offsets
+
+    F_est = icp.coarse_registration(by_patch, boxes)
+
+    assert np.allclose(F_est.R.matrix, F_true.R.matrix, atol=1e-9)
+    assert np.allclose(F_est.p.vec, F_true.p.vec, atol=1e-9)
+
+
+def test_collect_samples_relative_transform_and_invisibility():
+    """Check relative tip coordinates, skipped records, and acquisition time."""
+    from types import SimpleNamespace
+    from src.student import workflow
+    from src.session import Observation, PointerPlacement
+
+    design = workflow.design_scene()
+    shared = Frame(Rot("x", 0.3), vct3(50, -30, 20))
+    reference_pose = Frame(Rot("z", 0.2), vct3(10, 20, 30))
+    pointer_pose = Frame(Rot("y", -0.4), vct3(40, -10, 60))
+
+    reference = Observation(shared * reference_pose, [])
+    pointer = Observation(shared * pointer_pose, [])
+
+    class FakeSession:
+        """Minimal deterministic session for testing collection."""
+
+        def __init__(self):
+            """Initialize the clock and synthetic observations."""
+            self.design = design
+            self.clock = 0.0
+            self.index = -1
+            self.readings = [
+                {"ref": reference, "ptr": pointer},
+                {"ref": reference, "ptr": None},
+                {"ref": None, "ptr": pointer},
+            ]
+
+        def elapsed(self):
+            """Return simulated time in seconds."""
+            return self.clock
+
+        def place_pointer(self, patch_id):
+            """Place a pointer and return its bookkeeping handle."""
+            self.index += 1
+            self.clock += 1.0
+            return PointerPlacement(
+                patch_id, self.index, self.clock
+            )
+
+        def sample_marker_bodies(self):
+            """Return paired observations and advance the sample clock."""
+            self.clock += 0.03
+            return self.readings[self.index]
+
+    session = FakeSession()
+    samples = workflow.collect_samples(session, [2, 4, 6])
+
+    expected = (
+        reference_pose.inv() * pointer_pose * design.p_tip
+    ).vec.ravel()
+
+    assert len(samples) == 1
+    assert samples.as_array().shape == (1, 3)
+    assert np.allclose(samples.d_ref[0], expected)
+    assert samples.patch_ids == [2]
+    assert samples.handles[0].sample_index == 0
+
+    assert len(samples.skipped) == 2
+    assert samples.skipped[0]["sample_index"] == 1
+    assert samples.skipped[1]["sample_index"] == 2
+    assert samples.skipped[0]["reason"] == "invisible: pointer"
+    assert samples.skipped[1]["reason"] == "invisible: reference"
+    assert np.isclose(samples.t_collect, 3 * 1.03)
