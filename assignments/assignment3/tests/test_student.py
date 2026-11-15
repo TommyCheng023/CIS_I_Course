@@ -128,3 +128,47 @@ def test_registration_covariance_is_consistent():
 
 def test_patch_plan_keeps_bodies_visible():
     pytest.skip("TODO: check every planned patch keeps pointer and reference inside the frustum")
+
+
+def test_registration_covariance_matches_linear_model():
+    """Check covariance against a directly solved full-rank normal model."""
+    rng = np.random.default_rng(20)
+    n = 80
+    points = rng.normal(size=(n, 3)) * 30.0
+    normals = rng.normal(size=(n, 3))
+    normals /= np.linalg.norm(normals, axis=1, keepdims=True)
+    residuals = rng.uniform(0.05, 0.15, size=n)
+    result = icp.IcpResult(
+        F_reg=Frame.eye(),
+        residuals=residuals,
+        inlier_mask=np.ones(n, dtype=bool),
+        closest=points,
+        normals=normals,
+        n_iter=1,
+        converged=True,
+    )
+    mu, covariance = uncertainty.registration_covariance(result, Frame.eye())
+    jacobian = np.column_stack((
+        np.cross(points, normals),
+        normals,
+    ))
+    variance = np.sum(residuals**2) / (n - 6)
+    expected = variance * np.linalg.solve(jacobian.T @ jacobian, np.eye(6))
+
+    assert mu.shape == (6,)
+    assert np.allclose(mu, 0.0)
+    assert covariance.shape == (6, 6)
+    assert np.allclose(covariance, expected)
+    assert np.allclose(covariance, covariance.T)
+    assert np.linalg.eigvalsh(covariance).min() > 0.0
+
+
+def test_predicted_tre_translation_only(mesh):
+    """Translation-only isotropic uncertainty gives equal RMS at all vertices."""
+    sigma = 0.2
+    covariance = np.zeros((6, 6))
+    covariance[3:, 3:] = sigma**2 * np.eye(3)
+    prediction = uncertainty.predicted_tre(mesh, Frame.eye(), covariance)
+    expected = np.sqrt(3.0) * sigma
+    for key in ("rms", "mean", "max", "p90"):
+        assert np.isclose(prediction[key], expected)
