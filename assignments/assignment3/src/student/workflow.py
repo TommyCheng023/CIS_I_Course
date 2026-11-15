@@ -34,6 +34,7 @@ def design_scene() -> SceneDesign:
     """
     TODO: implement -- return the same values the notebook's Step 1 cell uses
     (grading calls this instead of the notebook).
+    Define the tracker pose, reference and pointer marker layouts, and pointer tip position.
 
     return
     -------
