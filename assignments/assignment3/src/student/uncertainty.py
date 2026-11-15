@@ -38,11 +38,15 @@ def registration_covariance(result: IcpResult, F0_reg: Frame) -> Tuple[np.ndarra
         np.cross(points, normals), normals
     ))
     u, sigma, vt = np.linalg.svd(J, full_matrices=False)
-    rank_tolerance = (
-        max(J.shape) * np.finfo(float).eps * sigma[0]
-    )
+    rank_tolerance = max(J.shape) * np.finfo(float).eps * sigma[0]
+
+    if np.count_nonzero(sigma > rank_tolerance) < 6:
+        raise ValueError(
+            "Surface geometry does not constrain all six parameters"
+        )
+
     variance = np.sum(residuals**2) / (n_inliers - 6)
-    C_reg = (variance * (1.0 / sigma ** 2)) @ vt
+    C_reg = variance * (vt.T * (1.0 / sigma ** 2)) @ vt
     C_reg = 0.5 * (C_reg + C_reg.T)
     correction = result.F_reg * F0_reg.inv()
     correction_matrix = np.eye(4)
