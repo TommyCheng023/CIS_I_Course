@@ -123,12 +123,100 @@ def test_report_round_trip(tmp_path):
 # ---------------------------------------------------------------- TODO: yours
 
 def test_registration_covariance_is_consistent():
-    pytest.skip("TODO: check that eta_true is within the predicted covariance (Mahalanobis ~ chi2_6)")
+    """Check covariance coverage under the assumed linear Gaussian model."""
+    from scipy.stats import chi2
+    from uncertainty_networks.se3 import exp_se3
+    rng = np.random.default_rng(21)
+    n_points = 100
+    n_trials = 300
+    noise_sigma = 0.1
+    points = rng.normal(size=(n_points, 3)) * 30.0
+    normals = rng.normal(size=(n_points, 3))
+    normals /= np.linalg.norm(normals, axis=1, keepdims=True)
+    jacobian = np.column_stack((
+        np.cross(points, normals),
+        normals,
+    ))
+    mahalanobis_squared = []
 
+    for _ in range(n_trials):
+        noise = rng.normal(0.0, noise_sigma, size=n_points)
+        estimate = np.linalg.lstsq(
+            jacobian, noise, rcond=None
+        )[0]
+        fit_residuals = noise - jacobian @ estimate
+        result = icp.IcpResult(
+            F_reg=Frame(exp_se3(estimate)),
+            residuals=np.abs(fit_residuals),
+            inlier_mask=np.ones(n_points, dtype=bool),
+            closest=points,
+            normals=normals,
+            n_iter=1,
+            converged=True,
+        )
+        mu, covariance = uncertainty.registration_covariance(
+            result, Frame.eye()
+        )
+        squared_distance = mu @ np.linalg.solve(covariance, mu)
+        mahalanobis_squared.append(squared_distance)
+
+    mahalanobis_squared = np.asarray(mahalanobis_squared)
+    coverage = np.mean(
+        mahalanobis_squared <= chi2.ppf(0.95, df=6)
+    )
+
+    assert 0.90 <= coverage <= 0.99
+    assert 4.0 <= mahalanobis_squared.mean() <= 8.0
 
 def test_patch_plan_keeps_bodies_visible():
-    pytest.skip("TODO: check every planned patch keeps pointer and reference inside the frustum")
+    """Check nominal visibility in a synthetic CT-aligned workspace."""
+    from collections import Counter
+    from src.student import workflow
+    from assignments.assignment1.src.tracker import Tracker
 
+    data_dir = MESH_FILE.parent
+    boxes = load_patch_boxes(
+        data_dir / "box-centroids-rotations-world.json"
+    )
+    design = workflow.design_scene()
+    tracker = Tracker("visibility_test", design.F_tracker_approx)
+
+    plan = workflow.plan_patches(
+        boxes,
+        n_patches=12,
+        samples_per_patch=6,
+    )
+
+    counts = Counter(plan)
+    assert len(plan) == 72
+    assert len(counts) == 12
+    assert all(count == 6 for count in counts.values())
+    reference_pose = Frame.eye()
+    reference_points = [
+        reference_pose * marker
+        for marker in design.ref_marker_positions
+    ]
+    assert tracker.is_visible(reference_points)
+
+    box_by_id = {box.id: box for box in boxes}
+
+    for patch_id in counts:
+        box = box_by_id[patch_id]
+        pointer_rotation = box.F_box.R
+        pointer_translation = (
+            vct3(box.p) - pointer_rotation * design.p_tip
+        )
+        pointer_pose = Frame(
+            pointer_rotation, pointer_translation
+        )
+
+        pointer_points = [
+            pointer_pose * marker
+            for marker in design.ptr_marker_positions
+        ]
+        assert tracker.is_visible(pointer_points), (
+            f"Pointer not visible at patch {patch_id}"
+        )
 
 def test_registration_covariance_matches_linear_model():
     """Check covariance against a directly solved full-rank normal model."""
@@ -172,3 +260,6 @@ def test_predicted_tre_translation_only(mesh):
     expected = np.sqrt(3.0) * sigma
     for key in ("rms", "mean", "max", "p90"):
         assert np.isclose(prediction[key], expected)
+
+
+# TODO: two more test functions for `coarse_registration` and `collect_samples`
