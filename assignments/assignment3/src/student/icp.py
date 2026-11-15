@@ -70,9 +70,9 @@ def coarse_registration(d_by_patch: Dict[int, np.ndarray], boxes: List[PatchBox]
     Estimate an initial reference-to-CT transform using patch identities.
     inputs
     ----------
-    d_by_patch : Dict[int, np.ndarray]
+    d_by_patch: Dict[int, np.ndarray]
         Patch IDs mapped to tip samples of shape (N_i, 3) in reference coordinates. Each patch must contain at least one sample.
-    boxes : List[PatchBox]
+    boxes: List[PatchBox]
         Patch boxes providing corresponding centers in CT coordinates.
 
     return
@@ -112,17 +112,17 @@ def icp(d: np.ndarray, mesh: Mesh, F_init: Frame, max_iter: int = 100, tol: floa
 
     inputs
     ----------
-    d : np.ndarray, shape (K, 3)
+    d: np.ndarray, shape (K, 3)
         Measured tip positions in reference coordinates.
-    mesh : Mesh
+    mesh: Mesh
         Target surface in CT coordinates.
-    F_init : Frame
+    F_init: Frame
         Initial reference-to-CT transform.
-    max_iter : int
+    max_iter: int
         Maximum number of transformation updates; must be positive.
-    tol : float
+    tol: float
         Convergence tolerance in millimeters. Stop when maximum inlier movement is below `tol`, or RMS changes remain below tol for three updates.
-    reject : Optional[str]
+    reject: Optional[str]
         "mad" for adaptive distance rejection, or None for no rejection.
 
     return
